@@ -1,23 +1,16 @@
-import express from "express";
+import express, { query } from "express";
 import bodyParser from "body-parser";
 import pg from "pg";
 import bcrypt from "bcrypt";
 import passport from "passport";
 import { Strategy } from "passport-local";
 import session from "express-session";
-import env from "dotenv";
+import { Strategy as GoogleStratergy } from "passport-google-oauth20";
+import "dotenv/config";
+
 const app = express();
 const port = 3000;
 const saltRounds = 12;
-
-env.config();
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: true,
-  })
-);
 
 const db = new pg.Client({
   user: process.env.PG_USER,
@@ -26,14 +19,57 @@ const db = new pg.Client({
   password: process.env.PG_PASSWORD,
   port: process.env.PG_PORT,
 });
-db.connect();
 
+passport.use(
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static("public"));
+  new GoogleStratergy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secrets",
+  },
+    async (accesToken, refreshToken, profile, cb) => {
+      try {
+
+        console.log("user ki profilr ", profile);
+        console.log("bahar",profile._json.email);
+        const result = await db.query("SELECT * FROM users WHERE email = $1",[profile._json.email]);
+        if(result.rows.length === 0){
+        storeEmail =   profile._json.email;
+          console.log("yes",profile.email);
+          const newUser = await db.query("INSERT INTO  users(email,password) VALUES($1,$2) RETURNING*",[profile._json.email,"google"]);
+          console.log(newUser.rows[0])
+          return cb(null,newUser.rows[0]);
+        }else{  
+          return cb(null,result.rows[0]);
+        }
+      } catch (err) {
+        console.log(err);
+      }
+    }
+  )
+)
+
+passport.serializeUser((user, cb) => {
+  cb(null, user);
+});
+
+passport.deserializeUser((user, cb) => {
+  cb(null, user);
+});
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: true,
+  })
+);
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
 app.get("/", (req, res) => {
   res.render("home.ejs");
@@ -55,6 +91,13 @@ app.get("/secrets", async (req, res) => {
   }
 });
 
+app.get(
+  "/auth/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+  })
+);
+
 app.post("/register", async (req, res) => {
   const email = req.body.username;
   const password = req.body.password;
@@ -65,7 +108,7 @@ app.post("/register", async (req, res) => {
       email,
     ]);
 
-    await bcrypt.hash(password, saltRounds+1, async (err, hash) => {
+    await bcrypt.hash(password, saltRounds + 1, async (err, hash) => {
       if (exists.rows[0]) {
         console.log(exists.rows);
         res.json("User Already exists Try to login");
@@ -89,8 +132,29 @@ app.post("/login",
   })
 );
 
+app.get(
+  "/auth/google/secrets",
+  passport.authenticate("google", {
+    successRedirect: "/secrets",
+    failureRedirect: "/login",
+  })
+)
 
+app.get("/logout", (req, res) => {
+  req.logout(function (err) {
+    if (err) {
+      return next(err);
+    }
+    res.redirect("/");
+  });
+});
+
+let storeEmail;
+async function fun(){
+    await db.query("DELETE FROM users WHERE password = 'google'");
+}
 passport.use(
+  "local",
   new Strategy(async function verify(username, password, cb) {
     console.log(username);
     try {
@@ -124,14 +188,14 @@ passport.use(
   })
 );
 
-passport.serializeUser((user, cb) => {
-  cb(null, user);
-});
+async function start() {
 
-passport.deserializeUser((user, cb) => {
-  cb(null, user);
-});
+  await db.connect();
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+
+}
+
+start();
