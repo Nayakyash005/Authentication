@@ -85,7 +85,14 @@ app.get("/register", (req, res) => {
 
 app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
-    res.render("secrets.ejs");
+    const result = await db.query("SELECT secret FROM users WHERE email=$1",[req.user.email]);
+   let mySec = "there is no secret of mine";
+    if(result.rows[0].secret){
+       mySec = result.rows[0].secret;
+    }
+    res.render("secrets.ejs",{
+      MYsecret: mySec,
+    });
   } else {
     res.render("login.ejs");
   }
@@ -115,7 +122,7 @@ app.post("/register", async (req, res) => {
       } else {
         await db.query("INSERT INTO users(email,password) VALUES($1,$2)", [email, hash]);
         console.log(hash);
-        res.render("secrets.ejs");
+        res.redirect("/secrets");
       }
     })
 
@@ -144,15 +151,34 @@ app.get("/logout", (req, res) => {
   req.logout(function (err) {
     if (err) {
       return next(err);
-    }
+    }else{
     res.redirect("/");
+    }
   });
 });
+
+
+//-------creating a submit button route-----------------//
+app.get("/submit", async (req,res)=>{
+    if(req.isAuthenticated()){
+      res.render("submit.ejs");
+    } else {
+      res.redirect("/login");
+    }
+});
+
+app.post("/submit", async (req,res)=>{
+     console.log(req.body.secret);
+     const sec  =  req.body.secret;
+     await db.query("UPDATE users SET secret =$1 WHERE email = $2",[sec,req.user.email]);
+     res.redirect("/secrets")
+})
 
 let storeEmail;
 async function fun(){
     await db.query("DELETE FROM users WHERE password = 'google'");
 }
+
 passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
